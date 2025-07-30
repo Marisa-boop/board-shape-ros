@@ -1,0 +1,26 @@
+services:
+  ros2_yolo_usb_driver:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+    image: marisa101/private:ros2_yolo_usb_driver_latest
+    container_name: ros2_yolo_usb_driver
+    environment:
+      - QT_X11_NO_MITSHM=1
+      - DISPLAY=$DISPLAY
+    working_dir: /ros2_ws
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /dev/dri:/dev/dri
+      - /dev/video0:/dev/video0
+      - /dev/video0:/dev/video2
+      - ../workdir:/ros2_ws
+    command: ["/bin/bash"]

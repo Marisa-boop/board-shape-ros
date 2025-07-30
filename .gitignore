@@ -1,0 +1,89 @@
+# ---> C++
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Ignore generated docs
+*.dox
+*.wikidoc
+
+# Eclipse stuff
+.project
+.cproject
+
+# Qt Creator stuff
+CMakeLists.txt.user
+qtcreator-*
+*.user
+
+# Temporary files
+*~
+
+# Emacs
+.#*
+
+# Colcon custom files
+COLCON_IGNORE
+AMENT_IGNORE
+
+# MindVision SDK
+Camera/
+
+# Miscellaneous
+srv/_*.py
+*.pcd
+*.pyc
+
+# Model files
+*.engine
+*.onnx
+
+# Assets
+assets/
+
+# ros2 files
+install/
+log/
+build/
+
+*.pcd
+*.jpg
+*.png
+
+packages/
+*.drawio
+*.zip
+datasets/
+
+*.7z
+tmp/
+temp/

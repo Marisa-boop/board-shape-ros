@@ -14,6 +14,7 @@ from .subImageProcesser import SubImageProcessor
 from .shapeDetector import ShapeDetector
 from .featureProcesser import GeometryFeatureProcessor
 from .pnpSolver import PnPSolver
+from .numberClassify import NumberClassifier
 
 
 class ShapeDetectorNode(Node):
@@ -26,6 +27,7 @@ class ShapeDetectorNode(Node):
         # ROS2参数声明
         self.declare_parameter("board_model_path", "./model/board.pt")
         self.declare_parameter("shape_model_path", "./model/shape.pt")
+        self.declare_parameter("number_model_path", "./model/number.pt")
         self.declare_parameter("hmin", 131)
         self.declare_parameter("hmax", 178)
         self.declare_parameter("smin", 3)
@@ -43,6 +45,7 @@ class ShapeDetectorNode(Node):
         # 获取参数值
         board_model_path = self.get_parameter("board_model_path").value
         shape_model_path = self.get_parameter("shape_model_path").value
+        number_model_path = self.get_parameter("number_model_path").value
         # hsv_params = {
         #     "hmin": self.get_parameter("hmin").value,
         #     "hmax": self.get_parameter("hmax").value,
@@ -72,18 +75,19 @@ class ShapeDetectorNode(Node):
         self.homography_transformer = HomographyTransformer(
             src_points=src_pts, dst_points=dst_pts
         )
+        self.number_classifier = NumberClassifier(model_path=number_model_path)
         # 初始化相机参数
         camera_matrix = np.array(
             [
-                [1624.49074, 0.0, 768.02337],
-                [0.0, 1623.14924, 382.99146],
+                [1728.27186, 0.0, 569.30447],
+                [0.0, 1729.86488, 418.90675],
                 [0.0, 0.0, 1.0],
             ],
             dtype=np.float32,
         )
 
         dist_coeffs = np.array(
-            [-0.027944, 0.068379, -0.017371, 0.026443, 0.000000], dtype=np.float32
+            [-0.080040, 0.468967, -0.012946, -0.002907, 0.000000], dtype=np.float32
         )
         # 创建PnP求解器实例
         self.pnp_solver = PnPSolver(
@@ -119,7 +123,8 @@ class ShapeDetectorNode(Node):
         self.number = None
 
     def received_data_callback(self, msg):
-        self.is_number_cls_mode = True
+        if self.is_number_cls_mode == False:
+            self.is_number_cls_mode = True
         self.number = msg.number
         self.detect_result.is_received = float(1)
         self.get_logger().info(f"进入数字检测模式, number: {msg.number}")
@@ -143,10 +148,16 @@ class ShapeDetectorNode(Node):
         self.last_time = current_time
         self.get_logger().debug(f"处理FPS: {self.fps:.1f}")
 
-    def number_cls_callback(self):
+    def number_cls_callback(self, sub_square_image):
+        # 输入图片，输出数字
         self.get_logger().info("进行数字检测")
-        pass
+
         # 进行数字分类
+        result = self.number_classifier.detect(sub_square_image)
+        if result is not None:
+            number = result[0]
+            return int(number) == int(self.number)
+        return False
 
     def process_frame(self, frame, header):
         """处理单帧图像并发布结果"""
@@ -274,12 +285,8 @@ class ShapeDetectorNode(Node):
                                 # 更新一次单应矩阵
                                 # pixel_features用于显示图像，real_features用于计算边长
                                 pixel_features, real_features = self._feature_process(
-                                    sub_detections, detections[i]
+                                    sub_detections, detections[i], subimg
                                 )
-
-                                # TODO: 处理数字
-                                if self.is_number_cls_mode:
-                                    self.number_cls_callback()
 
                             except Exception as e:
                                 self.get_logger().error(f"提取子图特征失败: {str(e)}")
@@ -313,7 +320,7 @@ class ShapeDetectorNode(Node):
         # 发布检测结果
         self.detect_result_pub.publish(self.detect_result)
 
-    def _feature_process(self, sub_detections, det):
+    def _feature_process(self, sub_detections, det, subimg):
         pixel_features = {}
         real_features = {}
         for cls_id in self.shape_detector.cls_map:
@@ -341,23 +348,113 @@ class ShapeDetectorNode(Node):
                     self.detect_result.length = float(radius)
 
                 elif cls_name == "square":
-                    pixel_features[cls_name] = (
-                        self.feature_processor.extract_square_features(
-                            sub_detections[cls_name]["polygon"]
-                        )
-                    )
-                    real_coners, length = (
-                        self.feature_processor.extract_square_features(
-                            self.homography_transformer.transform_features(
-                                self.subimage_processor.restore_coordinates(
-                                    det, sub_detections[cls_name]["polygon"]
+                    # TODO: 处理数字
+                    if self.is_number_cls_mode:
+                        squares = sub_detections[cls_name]
+                        if not squares:  # 如果没有检测到方形，则跳过
+                            continue
+                        # 提取方形子图
+                        is_find_set_number = False
+                        for square in squares:
+                            sub_square_image = (
+                                self.subimage_processor.extract_rectangular_subimage(
+                                    subimg, square["polygon"], aspect_ratio=2.0
                                 )
                             )
-                        )
-                    )
-                    real_features[cls_name] = (real_coners, length)
-                    self.get_logger().info(f"length: {length}")
-                    self.detect_result.length = float(length)
+                            is_find_set_number = self.number_cls_callback(
+                                sub_square_image
+                            )
+
+                            if is_find_set_number:
+                                # 提取当前方形的特征
+                                pixel_corners, pixel_length = (
+                                    self.feature_processor.extract_square_features(
+                                        square["polygon"]
+                                    )
+                                )
+                                restored_polygon = (
+                                    self.subimage_processor.restore_coordinates(
+                                        det, square["polygon"]
+                                    )
+                                )
+                                # 应用单应变换，将坐标转换到真实世界坐标系
+                                transformed_polygon = (
+                                    self.homography_transformer.transform_features(
+                                        restored_polygon
+                                    )
+                                )
+                                # 在真实世界坐标系中提取方形的特征
+                                real_corners, real_length = (
+                                    self.feature_processor.extract_square_features(
+                                        transformed_polygon
+                                    )
+                                )
+
+                                pixel_features[cls_name] = (
+                                    pixel_corners, pixel_length)
+                                real_features[cls_name] = (
+                                    real_corners, real_length)
+                                self.get_logger().info(
+                                    f"true number square length: {real_length}"
+                                )
+                                self.detect_result.length = float(real_length)
+                                break
+                    else:
+                        # 特殊处理square类型
+                        squares = sub_detections[cls_name]
+                        if not squares:  # 如果没有检测到方形，则跳过
+                            continue
+
+                        min_length = float("inf")  # 初始化为极大值
+                        min_square = None
+                        min_real_corners = None
+
+                        # 遍历所有检测到的方形
+                        for square in squares:
+                            # 提取当前方形的特征
+                            pixel_corners, pixel_length = (
+                                self.feature_processor.extract_square_features(
+                                    square["polygon"]
+                                )
+                            )
+
+                            # 恢复坐标到原图（通过det，即黑框的检测信息）
+                            restored_polygon = (
+                                self.subimage_processor.restore_coordinates(
+                                    det, square["polygon"]
+                                )
+                            )
+
+                            # 应用单应变换，将坐标转换到真实世界坐标系
+                            transformed_polygon = (
+                                self.homography_transformer.transform_features(
+                                    restored_polygon
+                                )
+                            )
+
+                            # 在真实世界坐标系中提取方形的特征
+                            real_corners, real_length = (
+                                self.feature_processor.extract_square_features(
+                                    transformed_polygon
+                                )
+                            )
+
+                            # 更新最小边长和对应的方形
+                            if real_length < min_length:
+                                min_length = real_length
+                                min_square = square
+                                min_real_corners = real_corners
+                                min_pixel_corners = pixel_corners
+
+                        # 保存最小方形的特征
+                        pixel_features[cls_name] = (
+                            min_pixel_corners, min_length)
+                        real_features[cls_name] = (
+                            min_real_corners, min_length)
+                        self.get_logger().info(
+                            f"Min square length: {min_length}")
+                        self.detect_result.length = float(min_length)
+
                 elif cls_name == "triangle":
                     pixel_features[cls_name] = (
                         self.feature_processor.extract_triangle_features(
@@ -376,7 +473,73 @@ class ShapeDetectorNode(Node):
                     real_features[cls_name] = (real_coners, length)
                     self.get_logger().info(f"length: {length}")
                     self.detect_result.length = float(length)
+
         return pixel_features, real_features
+
+    # def _feature_process(self, sub_detections, det):
+    #     pixel_features = {}
+    #     real_features = {}
+    #     for cls_id in self.shape_detector.cls_map:
+    #         cls_name, _ = self.shape_detector.cls_map[cls_id]
+    #         if sub_detections[cls_name] is not None:
+    #             self.get_logger().info(f"detect {cls_name}")
+    #             pos, radius, length = None, None, None
+    #             if cls_name == "circle":
+    #                 pos, radius = self.feature_processor.extract_circle_features(
+    #                     sub_detections[cls_name]["polygon"]
+    #                 )
+    #                 # for sub
+    #                 pixel_features[cls_name] = (pos, radius)
+    #
+    #                 # for whole
+    #                 real_pos, radius = self.feature_processor.extract_circle_features(
+    #                     self.homography_transformer.transform_features(
+    #                         self.subimage_processor.restore_coordinates(
+    #                             det, sub_detections[cls_name]["polygon"]
+    #                         )
+    #                     )
+    #                 )
+    #                 real_features[cls_name] = (real_pos, radius)
+    #                 self.get_logger().info(f"radius: {radius}")
+    #                 self.detect_result.length = float(radius)
+    #
+    #             elif cls_name == "square":
+    #                 pixel_features[cls_name] = (
+    #                     self.feature_processor.extract_square_features(
+    #                         sub_detections[cls_name]["polygon"]
+    #                     )
+    #                 )
+    #                 real_coners, length = (
+    #                     self.feature_processor.extract_square_features(
+    #                         self.homography_transformer.transform_features(
+    #                             self.subimage_processor.restore_coordinates(
+    #                                 det, sub_detections[cls_name]["polygon"]
+    #                             )
+    #                         )
+    #                     )
+    #                 )
+    #                 real_features[cls_name] = (real_coners, length)
+    #                 self.get_logger().info(f"length: {length}")
+    #                 self.detect_result.length = float(length)
+    #             elif cls_name == "triangle":
+    #                 pixel_features[cls_name] = (
+    #                     self.feature_processor.extract_triangle_features(
+    #                         sub_detections[cls_name]["polygon"]
+    #                     )
+    #                 )
+    #                 real_coners, length = (
+    #                     self.feature_processor.extract_triangle_features(
+    #                         self.homography_transformer.transform_features(
+    #                             self.subimage_processor.restore_coordinates(
+    #                                 det, sub_detections[cls_name]["polygon"]
+    #                             )
+    #                         )
+    #                     )
+    #                 )
+    #                 real_features[cls_name] = (real_coners, length)
+    #                 self.get_logger().info(f"length: {length}")
+    #                 self.detect_result.length = float(length)
+    #     return pixel_features, real_features
 
 
 def main(args=None):

@@ -13,6 +13,7 @@ def generate_launch_description():
                 parameters=[
                     {"board_model_path": "./model/board.pt"},
                     {"shape_model_path": "./model/shape.pt"},
+                    {"number_model_path": "./model/number.pt"},
                     {"hmin": 131},
                     {"hmax": 178},
                     {"smin": 3},

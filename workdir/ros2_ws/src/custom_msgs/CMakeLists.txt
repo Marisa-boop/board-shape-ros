@@ -15,6 +15,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(std_msgs REQUIRED)  # 若依赖其他消息
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectResult.msg"
+  "msg/ReceivedData.msg"
   DEPENDENCIES std_msgs  # 声明嵌套消息的依赖
   DEPENDENCIES geometry_msgs
 )

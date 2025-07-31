@@ -34,6 +34,7 @@ RMSerialDriver::RMSerialDriver(const rclcpp::NodeOptions & options)
 
   // Create Publisher
   latency_pub_ = this->create_publisher<std_msgs::msg::Float64>("/latency", 10);
+  received_data_pub_ = this->create_publisher<custom_msgs::msg::ReceivedData>("/received_data", 10);
 
   // Create Subscription
   detect_result_sub_ = this->create_subscription<custom_msgs::msg::DetectResult>(
@@ -76,11 +77,11 @@ void RMSerialDriver::receiveData()
 
   while (rclcpp::ok()) {
     try {
+      custom_msgs::msg::ReceivedData received_data;
       serial_driver_->port()->receive(header);
 
-      // TODO: 正常是0x5A，暂时验证自发自收，所以暂时改成0xA5
-      // 因为自发自收成功，改回0x5A
-      if (header[0] == 0x5A) {
+      // TODO: 改包
+      if (header[0] == 0xFF) {
         // if (header[0] == 0xA5) {
         // if (header[0] == 0x5A) {
         data.resize(sizeof(ReceivePacket) - 1);
@@ -89,15 +90,24 @@ void RMSerialDriver::receiveData()
         data.insert(data.begin(), header[0]);
         ReceivePacket packet = fromVector(data);
 
-        bool crc_ok =
-          crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
-        if (crc_ok) {
-          // TODO: 实现对解析的接收的数据包的处理，暂时用于验证自发自收
-          RCLCPP_INFO(get_logger(), "id: %d\nx: %f\ny: %f\n", packet.id, packet.x, packet.y);
-
+        //判断帧尾
+        if ((uint8_t)packet.end == 0xFA) {
+          received_data.number = packet.number;
+          received_data_pub_->publish(received_data);
+          RCLCPP_INFO(get_logger(), "number: %d\n", packet.number);
         } else {
-          RCLCPP_ERROR(get_logger(), "CRC error!");
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 20, "Invalid end: %02X", packet.end);
         }
+
+        // bool crc_ok =
+        //   crc16::Verify_CRC16_Check_Sum(reinterpret_cast<const uint8_t *>(&packet), sizeof(packet));
+        // if (crc_ok) {
+        //   // TODO: 实现对解析的接收的数据包的处理，暂时用于验证自发自收
+        //   RCLCPP_INFO(get_logger(), "id: %d\nx: %f\ny: %f\n", packet.id, packet.x, packet.y);
+        //
+        // } else {
+        //   RCLCPP_ERROR(get_logger(), "CRC error!");
+        // }
       } else {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 20, "Invalid header: %02X", header[0]);
       }
@@ -119,41 +129,15 @@ void RMSerialDriver::sendData(const custom_msgs::msg::DetectResult::SharedPtr ms
     //   uint8_t header = 0xA5;
     //   // uint8_t id;
     //   // 任务一
-    //   float board_x1;
-    //   float board_y1;
-    //   float board_x2;
-    //   float board_y2;
-    //   float board_x3;
-    //   float board_y3;
-    //   float board_x4;
-    //   float board_y4;
-    //   float laser1_x5;
-    //   float laser1_y5;
+    //   float depth;
+    //   float length;
     //   uint8_t end = 0xAF;
-    //   // 任务二
-    //   uint8_t header2 = 0xBA;
-    //   float laser_follow_x6;
-    //   float laser_follow_y6;
-    //   float laser_followed_x7;
-    //   float laser_followed_y7;
-    //   uint8_t end2 = 0xBF;
     //   // 暂时不用
     //   uint16_t checksum = 0;
     // } __attribute__((packed));
-    packet.board_x1 = msg->board_x1;
-    packet.board_y1 = msg->board_y1;
-    packet.board_x2 = msg->board_x2;
-    packet.board_y2 = msg->board_y2;
-    packet.board_x3 = msg->board_x3;
-    packet.board_y3 = msg->board_y3;
-    packet.board_x4 = msg->board_x4;
-    packet.board_y4 = msg->board_y4;
-    packet.laser1_x5 = msg->laser1_x5;
-    packet.laser1_y5 = msg->laser1_y5;
-    packet.laser_follow_x6 = msg->laser_follow_x6;
-    packet.laser_follow_y6 = msg->laser_follow_y6;
-    packet.laser_followed_x7 = msg->laser_followed_x7;
-    packet.laser_followed_y7 = msg->laser_followed_y7;
+    packet.depth = msg->depth;
+    packet.length = msg->length;
+    packet.is_received = msg->is_received;
 
     crc16::Append_CRC16_Check_Sum(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
 

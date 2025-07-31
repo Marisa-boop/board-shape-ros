@@ -16,36 +16,24 @@ struct ReceivePacket
   // 因自发自收成功，改回0x5A
   // uint8_t header = 0x5A;
   // uint8_t header = 0xA5;
-  uint8_t header = 0x5A;
-  uint8_t id;
-  float x;
-  float y;
-  uint16_t checksum = 0;
+  uint8_t header = 0xFF;
+  // number
+  uint8_t number;
+  uint8_t end = 0xFA;
+  // 暂时不用crc
+  // uint16_t checksum = 0;
 } __attribute__((packed));
 
 struct SendPacket
 {
-  uint8_t header = 0xA5;
+  uint8_t header = 0xFF;
   // uint8_t id;
   // 任务一
-  float board_x1;
-  float board_y1;
-  float board_x2;
-  float board_y2;
-  float board_x3;
-  float board_y3;
-  float board_x4;
-  float board_y4;
-  float laser1_x5;
-  float laser1_y5;
-  uint8_t end = 0xAF;
-  // 任务二
-  uint8_t header2 = 0xBA;
-  float laser_follow_x6;
-  float laser_follow_y6;
-  float laser_followed_x7;
-  float laser_followed_y7;
-  uint8_t end2 = 0xBF;
+  float depth;
+  float length;
+  // for number receive true
+  float is_received = 0;
+  uint8_t end = 0xFA;
   // 暂时不用
   uint16_t checksum = 0;
 } __attribute__((packed));

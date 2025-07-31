@@ -24,6 +24,7 @@
 
 // interface
 #include "custom_msgs/msg/detect_result.hpp"
+#include "custom_msgs/msg/received_data.hpp"
 
 namespace rm_serial_driver
 {
@@ -54,6 +55,7 @@ private:
 
   // For debug usage
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr latency_pub_;
+  rclcpp::Publisher<custom_msgs::msg::ReceivedData>::SharedPtr received_data_pub_;
 
   std::thread receive_thread_;
 };

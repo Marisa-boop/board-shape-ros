@@ -53,6 +53,33 @@ projection_matrix:
   data: [658.50537,   0.     , 658.9821 ,   0.     ,
            0.     , 661.95245, 367.89184,   0.     ,
            0.     ,   0.     ,   1.     ,   0.     ]
+
+image_width: 1280
+image_height: 1024
+camera_name: mv_camera
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [1624.49074,    0.     ,  768.02337,
+            0.     , 1623.14924,  382.99146,
+            0.     ,    0.     ,    1.     ]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [-0.027944, 0.068379, -0.017371, 0.026443, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1., 0., 0.,
+         0., 1., 0.,
+         0., 0., 1.]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [1609.54704,    0.     ,  789.37161,    0.     ,
+            0.     , 1630.64383,  372.67778,    0.     ,
+            0.     ,    0.     ,    1.     ,    0.     ]
 """
     return cv2.undistort(
         src=frame, cameraMatrix=camera_matrix_data, distCoeffs=dist_coeffs_data
@@ -60,12 +87,12 @@ projection_matrix:
 
 
 camera_matrix_data = np.array(
-    [[661.31951, 0.0, 661.6395], [0.0, 662.05605, 368.61694], [0.0, 0.0, 1.0]],
+    [[1624.49074, 0.0, 768.02337], [0.0, 1623.14924, 382.99146], [0.0, 0.0, 1.0]],
     dtype=np.float32,
 )
 
 dist_coeffs_data = np.array(
-    [0.004463, -0.008857, -0.000346, -0.001388, 0.000000], dtype=np.float32
+    [-0.027944, 0.068379, -0.017371, 0.026443, 0.000000], dtype=np.float32
 )
 
 

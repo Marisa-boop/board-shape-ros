@@ -5,7 +5,7 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import time
-from custom_msgs.msg import DetectResult
+from custom_msgs.msg import DetectResult, ReceivedData
 
 from .transformer import HomographyTransformer
 from .utils import load_points_from_yaml
@@ -74,21 +74,29 @@ class ShapeDetectorNode(Node):
         )
         # 初始化相机参数
         camera_matrix = np.array(
-            [[661.31951, 0.0, 661.6395], [0.0, 662.05605, 368.61694], [0.0, 0.0, 1.0]],
+            [
+                [1624.49074, 0.0, 768.02337],
+                [0.0, 1623.14924, 382.99146],
+                [0.0, 0.0, 1.0],
+            ],
             dtype=np.float32,
         )
-        dist_coeffs = np.array(
-            [0.004463, -0.008857, -0.000346, -0.001388, 0.000000], dtype=np.float32
-        )
 
+        dist_coeffs = np.array(
+            [-0.027944, 0.068379, -0.017371, 0.026443, 0.000000], dtype=np.float32
+        )
         # 创建PnP求解器实例
         self.pnp_solver = PnPSolver(
             camera_matrix, dist_coeffs, method=cv2.SOLVEPNP_EPNP
         )
 
         # 创建订阅者和发布者
+        # sub
+        self.received_data_sub = self.create_subscription(
+            ReceivedData, "/received_data", self.received_data_callback, 10
+        )
         self.subscription = self.create_subscription(
-            Image, "/camera1/image_raw", self.image_callback, 10  # 队列大小
+            Image, "/image_raw", self.image_callback, 10  # 队列大小
         )
         self.result_image_pub = self.create_publisher(
             Image, "result_image", 10)
@@ -106,6 +114,15 @@ class ShapeDetectorNode(Node):
         self.get_logger().info("激光检测节点已启动，等待图像输入...")
         self.fps = 0
         self.last_time = time.time()
+
+        self.is_number_cls_mode = False
+        self.number = None
+
+    def received_data_callback(self, msg):
+        self.is_number_cls_mode = True
+        self.number = msg.number
+        self.detect_result.is_received = float(1)
+        self.get_logger().info(f"进入数字检测模式, number: {msg.number}")
 
     def image_callback(self, msg):
         """处理传入的图像消息"""
@@ -126,8 +143,15 @@ class ShapeDetectorNode(Node):
         self.last_time = current_time
         self.get_logger().debug(f"处理FPS: {self.fps:.1f}")
 
+    def number_cls_callback(self):
+        self.get_logger().info("进行数字检测")
+        pass
+        # 进行数字分类
+
     def process_frame(self, frame, header):
         """处理单帧图像并发布结果"""
+
+        self.detect_result.header = header
         # 执行分割检测
         detections = self.segment_detector.detect(frame)
 
@@ -195,25 +219,8 @@ class ShapeDetectorNode(Node):
 
         # 处理子图
         # std_msgs/Header header
-        # float32 board_x1=0
-        # float32 board_y1=0
-        # float32 board_x2=0
-        # float32 board_y2=0
-        # float32 board_x3=0
-        # float32 board_y3=0
-        # float32 board_x4=0
-        # float32 board_y4=0
-        # float32 laser1_x5
-        # float32 laser1_y5
-        # float32 laser_follow_x6=0
-        # float32 laser_follow_y6=0
-        # float32 laser_followed_x7=0
-        # float32 laser_followed_y7=0
-        self.detect_result.header = header
-        self.detect_result.laser_follow_x6 = 0.0
-        self.detect_result.laser_follow_y6 = 0.0
-        self.detect_result.laser_followed_x7 = 0.0
-        self.detect_result.laser_followed_y7 = 0.0
+        # float32 depth
+        # float32 length
 
         # 处理子图
         subimages = self.subimage_processor.get_subimages()
@@ -255,6 +262,7 @@ class ShapeDetectorNode(Node):
                             )
                             distance = tvec[2][0]
                             self.get_logger().info(f"距离: {distance}")
+                            self.detect_result.depth = float(distance)
                             result_image = self.feature_processor.draw_ordered_corners(
                                 result_image, board_corners
                             )
@@ -268,6 +276,11 @@ class ShapeDetectorNode(Node):
                                 pixel_features, real_features = self._feature_process(
                                     sub_detections, detections[i]
                                 )
+
+                                # TODO: 处理数字
+                                if self.is_number_cls_mode:
+                                    self.number_cls_callback()
+
                             except Exception as e:
                                 self.get_logger().error(f"提取子图特征失败: {str(e)}")
 
@@ -307,6 +320,7 @@ class ShapeDetectorNode(Node):
             cls_name, _ = self.shape_detector.cls_map[cls_id]
             if sub_detections[cls_name] is not None:
                 self.get_logger().info(f"detect {cls_name}")
+                pos, radius, length = None, None, None
                 if cls_name == "circle":
                     pos, radius = self.feature_processor.extract_circle_features(
                         sub_detections[cls_name]["polygon"]
@@ -324,6 +338,7 @@ class ShapeDetectorNode(Node):
                     )
                     real_features[cls_name] = (real_pos, radius)
                     self.get_logger().info(f"radius: {radius}")
+                    self.detect_result.length = float(radius)
 
                 elif cls_name == "square":
                     pixel_features[cls_name] = (
@@ -342,6 +357,7 @@ class ShapeDetectorNode(Node):
                     )
                     real_features[cls_name] = (real_coners, length)
                     self.get_logger().info(f"length: {length}")
+                    self.detect_result.length = float(length)
                 elif cls_name == "triangle":
                     pixel_features[cls_name] = (
                         self.feature_processor.extract_triangle_features(
@@ -359,6 +375,7 @@ class ShapeDetectorNode(Node):
                     )
                     real_features[cls_name] = (real_coners, length)
                     self.get_logger().info(f"length: {length}")
+                    self.detect_result.length = float(length)
         return pixel_features, real_features
 
 

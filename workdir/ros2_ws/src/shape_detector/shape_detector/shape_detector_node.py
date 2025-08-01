@@ -110,6 +110,30 @@ class ShapeDetectorNode(Node):
         self.result_sub_origin_image_pub = self.create_publisher(
             Image, "result_sub_origin_image", 10
         )
+        self.sub_square_image_pub = self.create_publisher(
+            Image, "sub_square_image", 10)
+
+        # number pub
+        self.number0_image_pub = self.create_publisher(
+            Image, "number0_image", 10)
+        self.number1_image_pub = self.create_publisher(
+            Image, "number1_image", 10)
+        self.number2_image_pub = self.create_publisher(
+            Image, "number2_image", 10)
+        self.number3_image_pub = self.create_publisher(
+            Image, "number3_image", 10)
+        self.number4_image_pub = self.create_publisher(
+            Image, "number4_image", 10)
+        self.number5_image_pub = self.create_publisher(
+            Image, "number5_image", 10)
+        self.number6_image_pub = self.create_publisher(
+            Image, "number6_image", 10)
+        self.number7_image_pub = self.create_publisher(
+            Image, "number7_image", 10)
+        self.number8_image_pub = self.create_publisher(
+            Image, "number8_image", 10)
+        self.number9_image_pub = self.create_publisher(
+            Image, "number9_image", 10)
         # self.debug_image_pub = self.create_publisher(Image, "debug_image", 10)
         self.detect_result_pub = self.create_publisher(
             DetectResult, "detect_result", 10
@@ -121,6 +145,12 @@ class ShapeDetectorNode(Node):
 
         self.is_number_cls_mode = False
         self.number = None
+        # TODO: 用来debug,测试数字分类
+        self.number_debug()
+
+    def number_debug(self):
+        self.number = 1
+        self.is_number_cls_mode = True
 
     def received_data_callback(self, msg):
         if self.is_number_cls_mode == False:
@@ -148,7 +178,7 @@ class ShapeDetectorNode(Node):
         self.last_time = current_time
         self.get_logger().debug(f"处理FPS: {self.fps:.1f}")
 
-    def number_cls_callback(self, sub_square_image):
+    def number_cls_callback(self, sub_square_image, header):
         # 输入图片，输出数字
         self.get_logger().info("进行数字检测")
 
@@ -156,6 +186,108 @@ class ShapeDetectorNode(Node):
         result = self.number_classifier.detect(sub_square_image)
         if result is not None:
             number = result[0]
+            number_frame = self.number_classifier.visualize(
+                sub_square_image, number)
+            match int(number):
+                case 0:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number0_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 0 图像发布失败: {str(e)}")
+
+                case 1:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number1_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 1 图像发布失败: {str(e)}")
+
+                case 2:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number2_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 2 图像发布失败: {str(e)}")
+
+                case 3:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number3_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 3 图像发布失败: {str(e)}")
+
+                case 4:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number4_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 4 图像发布失败: {str(e)}")
+
+                case 5:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number5_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 5 图像发布失败: {str(e)}")
+
+                case 6:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number6_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 6 图像发布失败: {str(e)}")
+
+                case 7:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number7_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 7 图像发布失败: {str(e)}")
+
+                case 8:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number8_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 8 图像发布失败: {str(e)}")
+
+                case 9:
+                    try:
+                        number_image_msg = self.bridge.cv2_to_imgmsg(
+                            number_frame, encoding="bgra8"
+                        )
+                        number_image_msg.header = header
+                        self.number9_image_pub.publish(number_image_msg)
+                    except Exception as e:
+                        self.get_logger().error(f"number 9 图像发布失败: {str(e)}")
             return int(number) == int(self.number)
         return False
 
@@ -285,7 +417,7 @@ class ShapeDetectorNode(Node):
                                 # 更新一次单应矩阵
                                 # pixel_features用于显示图像，real_features用于计算边长
                                 pixel_features, real_features = self._feature_process(
-                                    sub_detections, detections[i], subimg
+                                    sub_detections, detections[i], subimg, header
                                 )
 
                             except Exception as e:
@@ -320,7 +452,7 @@ class ShapeDetectorNode(Node):
         # 发布检测结果
         self.detect_result_pub.publish(self.detect_result)
 
-    def _feature_process(self, sub_detections, det, subimg):
+    def _feature_process(self, sub_detections, det, subimg, header):
         pixel_features = {}
         real_features = {}
         for cls_id in self.shape_detector.cls_map:
@@ -348,7 +480,7 @@ class ShapeDetectorNode(Node):
                     self.detect_result.length = float(radius)
 
                 elif cls_name == "square":
-                    # TODO: 处理数字
+                    # TODO: 处理数字, number
                     if self.is_number_cls_mode:
                         squares = sub_detections[cls_name]
                         if not squares:  # 如果没有检测到方形，则跳过
@@ -361,8 +493,21 @@ class ShapeDetectorNode(Node):
                                     subimg, square["polygon"], aspect_ratio=2.0
                                 )
                             )
+                            if sub_square_image is not None:
+                                try:
+                                    sub_square_msg_ = self.bridge.cv2_to_imgmsg(
+                                        sub_square_image, encoding="bgra8"
+                                    )
+                                    sub_square_msg_.header = header
+                                    self.sub_square_image_pub.publish(
+                                        sub_square_msg_)
+                                except Exception as e:
+                                    self.get_logger().error(
+                                        f"方形图像发布失败: {str(e)}"
+                                    )
+
                             is_find_set_number = self.number_cls_callback(
-                                sub_square_image
+                                sub_square_image, header
                             )
 
                             if is_find_set_number:

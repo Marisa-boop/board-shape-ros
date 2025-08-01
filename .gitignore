@@ -79,7 +79,6 @@ build/
 *.jpg
 *.png
 
-packages/
 *.drawio
 *.zip
 datasets/

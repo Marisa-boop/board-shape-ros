@@ -68,95 +68,112 @@ class SubImageProcessor:
 
         return restored_points
 
-    def extract_rectangular_subimage(self, subimg, polygon, aspect_ratio=2.0):
+    def extract_rectangular_subimage(self, image, polygon_points, aspect_ratio=None):
         """
-        从检测到的方形区域中提取长方形子图（旋转矩形区域）
-
+        提取四边形区域并标准化为256x256
         参数:
-            subimg: 原始子图 (BGRA格式)
-            polygon: 子图坐标系中的多边形点集
-            aspect_ratio: 长方形宽高比 (默认2:1)
-
+            image: 输入图像 (numpy数组)
+            polygon_points: 四边形点集 [[x1,y1], [x2,y2], ...]
+            aspect_ratio: 保留参数但不使用
         返回:
-            校正后的长方形图像 (BGRA格式)
+            256x256标准化图像
         """
-        # 1. 计算最小外接旋转矩形
-        rect = cv2.minAreaRect(polygon)
-        center, size, angle = rect
+        # 1. 点集转换为四边形顶点
+        rect_points = self.extract_rectangle_features(polygon_points)
+        if rect_points is None or len(rect_points) != 4:
+            raise ValueError("无法提取有效的四边形顶点")
 
-        # 2. 根据宽高比调整矩形尺寸
-        width, height = size
-        if width < height:
-            width, height = height, width
-            angle += 90  # 旋转角度
+        # 2. 顶点排序（左上->右上->右下->左下）
+        sorted_pts = self._sort_quadrilateral_points(rect_points)
 
-        # 根据宽高比调整尺寸
-        new_height = min(width, height)
-        new_width = new_height * aspect_ratio
-        size = (new_width, new_height)
+        # 3. 定义目标顶点（256x256）
+        dst_pts = np.array([[0, 0], [255, 0], [255, 255],
+                           [0, 255]], dtype=np.float32)
 
-        # 3. 获取旋转矩形的四个角点
-        box = cv2.boxPoints((center, size, angle))
-        box = np.int0(box)
+        # 4. 计算单应变换矩阵
+        H, _ = cv2.findHomography(sorted_pts, dst_pts)
 
-        # 4. 对点集排序（左上、右上、右下、左下）
-        ordered_box = self._order_points(box)
-
-        # 5. 计算目标尺寸（保持原始分辨率）
-        max_dim = max(subimg.shape[0], subimg.shape[1])
-        dst_width = int(max_dim * 0.8)  # 保留80%原始尺寸
-        dst_height = int(dst_width / aspect_ratio)
-
-        # 6. 定义目标点（透视变换后的位置）
-        dst_pts = np.array(
-            [
-                [0, 0],
-                [dst_width - 1, 0],
-                [dst_width - 1, dst_height - 1],
-                [0, dst_height - 1],
-            ],
-            dtype="float32",
-        )
-
-        # 7. 计算透视变换矩阵
-        M = cv2.getPerspectiveTransform(
-            ordered_box.astype(np.float32), dst_pts)
-
-        # 8. 应用透视变换
+        # 5. 应用透视变换
         warped = cv2.warpPerspective(
-            subimg,
-            M,
-            (dst_width, dst_height),
-            flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT,
-            borderValue=(0, 0, 0, 0),  # 透明背景
-        )
+            image, H, (256, 256), flags=cv2.INTER_CUBIC
+        )  # 使用高质量插值[4](@ref)
 
         return warped
 
-    @staticmethod
-    def _order_points(pts):
-        """将点排序为（左上，右上，右下，左下）顺序"""
-        # 初始化坐标矩阵
-        rect = np.zeros((4, 2), dtype="float32")
+    def extract_rectangle_features(self, contour_points):
+        """
+        从点集提取矩形顶点
+        参数:
+            contour_points: 点集 [[x1,y1], [x2,y2], ...]
+        返回:
+            四边形顶点坐标 [左上, 右上, 右下, 左下]
+        """
+        # 转换为凸包[3,5](@ref)
+        points = np.array(contour_points, dtype=np.int32).reshape((-1, 1, 2))
+        hull = cv2.convexHull(points)
 
-        # 计算中心点
-        center = np.mean(pts, axis=0)
+        if len(hull) < 4:
+            return None
 
-        # 按角度排序点
-        angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
-        sorted_pts = pts[np.argsort(angles)]
+        # 提取凸包点并转换为(n,2)格式
+        hull_points = hull.reshape(-1, 2)
 
-        # 识别左上、右上、右下、左下
-        x_sorted = sorted_pts[np.argsort(sorted_pts[:, 0])]
-        y_sorted = sorted_pts[np.argsort(sorted_pts[:, 1])]
+        # 若凸包点数为4，直接使用
+        if len(hull_points) == 4:
+            rect_points = hull_points
+        else:
+            # 寻找面积最大的四边形顶点组合[3](@ref)
+            max_area = 0
+            best_points = None
+            n = len(hull_points)
 
-        leftmost = x_sorted[:2]
-        rightmost = x_sorted[2:]
+            for i in range(n):
+                for j in range(i + 1, n):
+                    for k in range(j + 1, n):
+                        for l in range(k + 1, n):
+                            pts = np.array(
+                                [
+                                    hull_points[i],
+                                    hull_points[j],
+                                    hull_points[k],
+                                    hull_points[l],
+                                ]
+                            )
+                            area = cv2.contourArea(pts)
+                            if area > max_area:
+                                max_area = area
+                                best_points = pts
+            rect_points = best_points
 
-        rect[0] = leftmost[np.argmin(leftmost[:, 1])]  # 左上
-        rect[1] = rightmost[np.argmin(rightmost[:, 1])]  # 右上
-        rect[2] = rightmost[np.argmax(rightmost[:, 1])]  # 右下
-        rect[3] = leftmost[np.argmax(leftmost[:, 1])]  # 左下
+        return (
+            self._sort_quadrilateral_points(rect_points)
+            if rect_points is not None
+            else None
+        )
 
-        return rect
+    def _sort_quadrilateral_points(self, points):
+        """
+        将四边形顶点排序为: 左上->右上->右下->左下
+        基于:
+          1. 按x坐标排序
+          2. 分为左侧点和右侧点
+          3. 分别按y坐标排序
+        """
+        pts = np.array(points, dtype=np.float32)
+
+        # 按x坐标排序[7](@ref)
+        x_sorted = pts[np.argsort(pts[:, 0])]
+
+        # 分为左侧点和右侧点
+        left_points = x_sorted[:2]
+        right_points = x_sorted[2:]
+
+        # 左侧点按y排序：y小→左上，y大→左下
+        left_points = left_points[np.argsort(left_points[:, 1])]
+        tl, bl = left_points  # tl=左上, bl=左下
+
+        # 右侧点按y排序：y小→右上，y大→右下
+        right_points = right_points[np.argsort(right_points[:, 1])]
+        tr, br = right_points  # tr=右上, br=右下
+
+        return np.array([tl, tr, br, bl], dtype=np.float32)

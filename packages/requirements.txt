@@ -1,0 +1,7 @@
+torch
+torchvision
+torchaudio
+tensorboard
+stable-baselines3[extra]
+gym[box2d]
+numpy<2

@@ -1,0 +1,9 @@
+# os-specific listings first
+yaml https://mirror.nju.edu.cn/github-raw/ros/rosdistro/master/rosdep/osx-homebrew.yaml osx
+
+# generic
+yaml https://mirror.nju.edu.cn/github-raw/ros/rosdistro/master/rosdep/base.yaml
+yaml https://mirror.nju.edu.cn/github-raw/ros/rosdistro/master/rosdep/python.yaml
+yaml https://mirror.nju.edu.cn/github-raw/ros/rosdistro/master/rosdep/ruby.yaml
+
+# newer distributions (Groovy, Hydro, ...) must not be listed anymore, they are being fetched from the rosdistro index.yaml instead

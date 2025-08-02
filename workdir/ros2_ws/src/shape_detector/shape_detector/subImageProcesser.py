@@ -68,65 +68,83 @@ class SubImageProcessor:
 
         return restored_points
 
-    def extract_rectangular_subimage(self, image, polygon_points, aspect_ratio=None):
+    def extract_rectangular_subimage(self, image, polygon_points):
         """
-        提取四边形区域并标准化为256x256
+        提取四边形区域并标准化为256x256，通过顺时针旋转确保方向一致性
         参数:
             image: 输入图像 (numpy数组)
             polygon_points: 四边形点集 [[x1,y1], [x2,y2], ...]
-            aspect_ratio: 保留参数但不使用
         返回:
-            256x256标准化图像
+            校正后的256x256图像（仅顺时针旋转）
         """
-        # 1. 点集转换为四边形顶点
+        # 1. 获取有序顶点 [左上, 右上, 右下, 左下]
         rect_points = self.extract_rectangle_features(polygon_points)
         if rect_points is None or len(rect_points) != 4:
             raise ValueError("无法提取有效的四边形顶点")
 
-        # 2. 顶点排序（左上->右上->右下->左下）
-        sorted_pts = self._sort_quadrilateral_points(rect_points)
+        # 2. 计算最小外接矩形及其旋转角度 [5,9](@ref)
+        rect = cv2.minAreaRect(
+            rect_points.reshape(-1, 1, 2).astype(np.float32))
+        angle = rect[2]  # OpenCV返回的角度范围为[-90, 0)
 
-        # 3. 定义目标顶点（256x256）
+        # 3. 角度调整逻辑：确保仅顺时针旋转
+        # ------------------------------------------------------------------
+        # | 场景                | 原角度 | 调整后角度 | 旋转方向               |
+        # |---------------------|--------|------------|-----------------------|
+        # | 宽度>高度 (正常矩形) | -90≤θ<0| -θ         | 逆时针转θ→顺时针校正   |
+        # | 宽度<高度 (竖矩形)   | -90    | 0°         | 顺时针转90°→水平校正   |
+        # ------------------------------------------------------------------
+        if angle < -45:  # 处理竖矩形情况
+            angle += 90
+        else:
+            angle = -angle  # 转换为顺时针旋转角度
+
+        # 4. 计算旋转矩阵（顺时针旋转）[10,11](@ref)
+        height, width = image.shape[:2]
+        M_rotation = cv2.getRotationMatrix2D(
+            (width / 2, height / 2), angle, 1.0)
+
+        # 5. 执行旋转（填充透明背景避免裁剪）
+        rotated = cv2.warpAffine(
+            image,
+            M_rotation,
+            (width, height),
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(0, 0, 0),  # 黑色填充
+        )
+
+        # 6. 提取目标区域（基于旋转后顶点位置）
+        # 将原始顶点应用旋转矩阵变换
+        ones = np.ones((4, 1))
+        homogenous_pts = np.hstack((rect_points, ones))
+        rotated_pts = np.dot(homogenous_pts, M_rotation.T)[
+            :, :2].astype(np.float32)
+
+        # 7. 单应变换到256x256
         dst_pts = np.array([[0, 0], [255, 0], [255, 255],
                            [0, 255]], dtype=np.float32)
-
-        # 4. 计算单应变换矩阵
-        H, _ = cv2.findHomography(sorted_pts, dst_pts)
-
-        # 5. 应用透视变换
+        H, _ = cv2.findHomography(rotated_pts, dst_pts)
         warped = cv2.warpPerspective(
-            image, H, (256, 256), flags=cv2.INTER_CUBIC
-        )  # 使用高质量插值[4](@ref)
+            rotated, H, (256, 256), flags=cv2.INTER_CUBIC)
 
         return warped
 
     def extract_rectangle_features(self, contour_points):
         """
-        从点集提取矩形顶点
-        参数:
-            contour_points: 点集 [[x1,y1], [x2,y2], ...]
-        返回:
-            四边形顶点坐标 [左上, 右上, 右下, 左下]
+        从点集提取矩形顶点（保持不变）
         """
-        # 转换为凸包[3,5](@ref)
+        # 原有实现不变
         points = np.array(contour_points, dtype=np.int32).reshape((-1, 1, 2))
         hull = cv2.convexHull(points)
-
         if len(hull) < 4:
             return None
-
-        # 提取凸包点并转换为(n,2)格式
         hull_points = hull.reshape(-1, 2)
-
-        # 若凸包点数为4，直接使用
         if len(hull_points) == 4:
             rect_points = hull_points
         else:
-            # 寻找面积最大的四边形顶点组合[3](@ref)
             max_area = 0
             best_points = None
             n = len(hull_points)
-
             for i in range(n):
                 for j in range(i + 1, n):
                     for k in range(j + 1, n):
@@ -144,7 +162,6 @@ class SubImageProcessor:
                                 max_area = area
                                 best_points = pts
             rect_points = best_points
-
         return (
             self._sort_quadrilateral_points(rect_points)
             if rect_points is not None
@@ -153,27 +170,14 @@ class SubImageProcessor:
 
     def _sort_quadrilateral_points(self, points):
         """
-        将四边形顶点排序为: 左上->右上->右下->左下
-        基于:
-          1. 按x坐标排序
-          2. 分为左侧点和右侧点
-          3. 分别按y坐标排序
+        顶点排序逻辑（保持不变）
         """
         pts = np.array(points, dtype=np.float32)
-
-        # 按x坐标排序[7](@ref)
         x_sorted = pts[np.argsort(pts[:, 0])]
-
-        # 分为左侧点和右侧点
         left_points = x_sorted[:2]
         right_points = x_sorted[2:]
-
-        # 左侧点按y排序：y小→左上，y大→左下
         left_points = left_points[np.argsort(left_points[:, 1])]
-        tl, bl = left_points  # tl=左上, bl=左下
-
-        # 右侧点按y排序：y小→右上，y大→右下
+        tl, bl = left_points
         right_points = right_points[np.argsort(right_points[:, 1])]
-        tr, br = right_points  # tr=右上, br=右下
-
+        tr, br = right_points
         return np.array([tl, tr, br, bl], dtype=np.float32)

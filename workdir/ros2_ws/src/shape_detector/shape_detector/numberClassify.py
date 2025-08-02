@@ -18,33 +18,70 @@ class NumberClassifier:
         self.device = device
         self.class_names = {i: str(i) for i in range(10)}  # 数字0-9的类别映射
 
-    def detect(self, image):
+    def detect(self, image, set_number=None):
         """
         执行数字分类推理
         :param image: 输入图像 (支持文件路径或numpy数组)
-        :return: (predicted_digit, confidence) 元组 (若无有效预测返回None)
+        :param set_number: 设定的目标数字 (0-9之间的整数)
+        :return: 图像是否为set_number的置信度 (float)
+                 若无有效预测返回None
         """
-        # 支持文件路径输入[5](@ref)
+        # 支持文件路径输入
         if isinstance(image, str):
             image = cv2.imread(image)
             if image is None:
                 raise ValueError(f"无法读取图像: {image}")
 
+        # 转换为RGB格式
         if len(image.shape) == 3 and image.shape[2] == 3:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
+        # 执行推理
         results = self.model(image, verbose=False)
 
         # 后处理 - 提取概率最高的类别
         if results and hasattr(results[0], "probs"):
             probs = results[0].probs.data.cpu().numpy()
-            top1_index = np.argmax(probs)
-            confidence = probs[top1_index]
 
-            if confidence >= self.conf_threshold:
-                result = int(self.class_names[top1_index]), float(confidence)
-                return result
+            # 关键修改：检查set_number是否有效
+            if set_number is not None:
+                # 直接返回set_number类别的置信度
+                confidence = probs[set_number]
+                return float(confidence)
+            else:
+                # 如果未设置set_number，返回最高置信度的数字
+                top1_index = np.argmax(probs)
+                confidence = probs[top1_index]
+                return (int(top1_index), float(confidence))
         return None
+
+    # def detect(self, image, set_number=None):
+    #     """
+    #     执行数字分类推理
+    #     :param image: 输入图像 (支持文件路径或numpy数组)
+    #     :return: (predicted_digit, confidence) 元组 (若无有效预测返回None)
+    #     """
+    #     # 支持文件路径输入[5](@ref)
+    #     if isinstance(image, str):
+    #         image = cv2.imread(image)
+    #         if image is None:
+    #             raise ValueError(f"无法读取图像: {image}")
+    #
+    #     if len(image.shape) == 3 and image.shape[2] == 3:
+    #         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    #
+    #     results = self.model(image, verbose=False)
+    #
+    #     # 后处理 - 提取概率最高的类别
+    #     if results and hasattr(results[0], "probs"):
+    #         probs = results[0].probs.data.cpu().numpy()
+    #         top1_index = np.argmax(probs)
+    #         confidence = probs[top1_index]
+    #
+    #         if confidence >= self.conf_threshold:
+    #             result = int(self.class_names[top1_index]), float(confidence)
+    #             return result
+    #     return None
 
     def visualize(self, frame, number):
         """

@@ -7,6 +7,7 @@ class GeometryFeatureProcessor:
         """初始化几何特征处理器"""
         self.reference_short_edge = None
         self.reference_long_edge = None
+        self.gray_image = None
 
     # def extract_rectangle_features(self, contour):
     #     # """提取长方形特征 - 四个顶点"""
@@ -104,75 +105,203 @@ class GeometryFeatureProcessor:
             [points[tl_idx], points[bl_idx], points[br_idx], points[tr_idx]]
         )
 
+    # be youhuad
+    # def extract_square_features(self, contour):
+    #     """提取方形特征 - 返回四个有序角点和平均边长
+    #     Args:
+    #         contour: 输入轮廓
+    #     Returns:
+    #         corners: 排序后的四个角点 [左上, 右上, 右下, 左下]
+    #         avg_side: 平均边长
+    #     """
+    #     # === 新增：轮廓有效性验证 ===
+    #     if contour is None or len(contour) < 4:
+    #         return None, None
+    #
+    #     # === 修复1：确保轮廓数据类型正确 ===
+    #     if contour.dtype != np.float32:
+    #         try:
+    #             # 转换为OpenCV要求的32位浮点型
+    #             contour = contour.astype(np.float32)
+    #         except:
+    #             return None, None
+    #
+    #     # === 修复2：添加异常捕获 ===
+    #     try:
+    #         # 1. 多边形逼近
+    #         epsilon = 0.04 * cv2.arcLength(contour, True)
+    #         approx = cv2.approxPolyDP(contour, epsilon, True)
+    #     except Exception as e:
+    #         print(f"轮廓处理异常: {str(e)}")
+    #         return None, None
+    #
+    #     # 2. 获取四个顶点
+    #     if len(approx) == 4:
+    #         corners = approx.reshape(4, 2)
+    #     else:
+    #         try:
+    #             rect = cv2.minAreaRect(contour)
+    #             corners = np.float32(cv2.boxPoints(rect))  # 确保输出为float32
+    #         except:
+    #             return None, None
+    #
+    #     # 3. 角点排序（左上→右上→右下→左下）
+    #     def sort_corners(pts):
+    #         # 按x坐标排序
+    #         x_sorted = pts[np.argsort(pts[:, 0])]
+    #         # 分为左右两组
+    #         left_pts = x_sorted[:2]
+    #         right_pts = x_sorted[2:]
+    #         # 左侧按y排序（上→下）
+    #         left_pts = left_pts[np.argsort(left_pts[:, 1])]
+    #         # 右侧按y排序（上→下）
+    #         right_pts = right_pts[np.argsort(right_pts[:, 1])]
+    #         return np.array([left_pts[0], right_pts[0], right_pts[1], left_pts[1]])
+    #
+    #     try:
+    #         sorted_corners = sort_corners(corners)
+    #     except:
+    #         return None, None
+    #
+    #     # 4. 计算各边长度
+    #     side_lengths = []
+    #     for i in range(4):
+    #         p1 = sorted_corners[i]
+    #         p2 = sorted_corners[(i + 1) % 4]
+    #         side_lengths.append(np.linalg.norm(p1 - p2))
+    #
+    #     # 5. 计算平均边长
+    #     avg_side = np.mean(side_lengths)
+    #
+    #     return sorted_corners, avg_side
+
     def extract_square_features(self, contour):
-        """提取方形特征 - 返回四个有序角点和平均边长
+        """高精度提取方形特征 - 亚像素级角点定位+最小二乘优化
         Args:
-            contour: 输入轮廓
+            contour: 输入轮廓 (N,1,2)
         Returns:
-            corners: 排序后的四个角点 [左上, 右上, 右下, 左下]
-            avg_side: 平均边长
+            corners: 优化后的四个角点 [左上, 右上, 右下, 左下]
+            avg_side: 亚像素级平均边长
         """
-        # === 新增：轮廓有效性验证 ===
+        # ===== 1. 轮廓预处理 =====
         if contour is None or len(contour) < 4:
             return None, None
 
-        # === 修复1：确保轮廓数据类型正确 ===
-        if contour.dtype != np.float32:
-            try:
-                # 转换为OpenCV要求的32位浮点型
-                contour = contour.astype(np.float32)
-            except:
-                return None, None
+        # 转换为浮点型并移除重复点
+        contour = contour.astype(np.float32).reshape(-1, 2)
+        contour = np.unique(contour, axis=0)
 
-        # === 修复2：添加异常捕获 ===
-        try:
-            # 1. 多边形逼近
-            epsilon = 0.04 * cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, epsilon, True)
-        except Exception as e:
-            print(f"轮廓处理异常: {str(e)}")
+        # 计算凸包保证凸性
+        hull = cv2.convexHull(contour.reshape(-1, 1, 2)).reshape(-1, 2)
+        if len(hull) < 4:
             return None, None
 
-        # 2. 获取四个顶点
-        if len(approx) == 4:
-            corners = approx.reshape(4, 2)
-        else:
-            try:
-                rect = cv2.minAreaRect(contour)
-                corners = np.float32(cv2.boxPoints(rect))  # 确保输出为float32
-            except:
-                return None, None
+        # ===== 2. 顶点初始化 =====
+        # 最小外接矩形获取初始顶点
+        rect = cv2.minAreaRect(hull.reshape(-1, 1, 2))
+        init_corners = cv2.boxPoints(rect).astype(np.float32)
 
-        # 3. 角点排序（左上→右上→右下→左下）
+        # 顶点排序函数
         def sort_corners(pts):
             # 按x坐标排序
             x_sorted = pts[np.argsort(pts[:, 0])]
-            # 分为左右两组
-            left_pts = x_sorted[:2]
-            right_pts = x_sorted[2:]
-            # 左侧按y排序（上→下）
-            left_pts = left_pts[np.argsort(left_pts[:, 1])]
-            # 右侧按y排序（上→下）
-            right_pts = right_pts[np.argsort(right_pts[:, 1])]
-            return np.array([left_pts[0], right_pts[0], right_pts[1], left_pts[1]])
+            # 左边两点按y排序
+            left_pts = x_sorted[:2][np.argsort(x_sorted[:2, 1])]
+            # 右边两点按y排序
+            right_pts = x_sorted[2:][np.argsort(x_sorted[2:, 1])]
+            return np.vstack([left_pts[0], right_pts[0], right_pts[1], left_pts[1]])
 
-        try:
-            sorted_corners = sort_corners(corners)
-        except:
-            return None, None
+        sorted_corners = sort_corners(init_corners)
 
-        # 4. 计算各边长度
+        # ===== 3. 亚像素级顶点优化 =====
+        if hasattr(self, "gray_image") and self.gray_image is not None:
+            # 对每个角点进行亚像素优化
+            win_size = 5  # 减小窗口尺寸
+            criteria = (cv2.TERM_CRITERIA_EPS +
+                        cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+            for i in range(len(sorted_corners)):
+                pt = sorted_corners[i].reshape(1, 1, 2).astype(np.float32)
+                try:
+                    cv2.cornerSubPix(
+                        self.gray_image, pt, (win_size,
+                                              win_size), (-1, -1), criteria
+                    )
+                    sorted_corners[i] = pt[0][0]
+                except cv2.error:
+                    # 安全处理边界错误
+                    continue
+
+        # ===== 4. 精确角点计算 =====
+        # 使用最小二乘法优化直线拟合
+        def fit_line(points):
+            """最小二乘拟合直线"""
+            x = points[:, 0]
+            y = points[:, 1]
+            A = np.vstack([x, np.ones(len(x))]).T
+            m, c = np.linalg.lstsq(A, y, rcond=None)[0]
+            return m, -1, c  # ax + by + c = 0 (b = -1)
+
+        optimized_corners = []
+        for i in range(4):
+            # 确定每条边的点集区域
+            p1, p2 = sorted_corners[i], sorted_corners[(i + 1) % 4]
+
+            # 选择属于当前边的轮廓点
+            edge_points = []
+            for pt in hull:
+                # 点到直线距离 + 投影位置判断
+                vec1 = (p2 - p1).flatten()
+                vec2 = (pt - p1).flatten()
+                cross = np.abs(np.cross(vec1, vec2))
+                dot = np.dot(vec2, vec1)
+
+                if cross < np.linalg.norm(vec1) and 0 <= dot <= np.dot(vec1, vec1):
+                    edge_points.append(pt)
+
+            if len(edge_points) > 2:
+                # 最小二乘拟合直线
+                m, b, c = fit_line(np.array(edge_points))
+                optimized_corners.append((m, b, c))
+            else:
+                # 点不足时使用初始边
+                vec = p2 - p1
+                normal = np.array([-vec[1], vec[0]])
+                normal /= np.linalg.norm(normal)
+                optimized_corners.append(
+                    (normal[0], normal[1], -np.dot(normal, p1)))
+
+        # ===== 5. 角点计算与边长 =====
+        final_corners = []
+        for i in range(4):
+            # 解两条直线的交点
+            a1, b1, c1 = optimized_corners[i]
+            a2, b2, c2 = optimized_corners[(i + 1) % 4]
+
+            try:
+                # 解线性方程组
+                A = np.array([[a1, b1], [a2, b2]])
+                b_vec = np.array([-c1, -c2])
+                corner = np.linalg.solve(A, b_vec)
+                final_corners.append(corner)
+            except:
+                # 退化情况使用初始角点
+                final_corners.append(sorted_corners[i])
+
+        final_corners = np.array(final_corners)
+
+        # ===== 6. 边长计算 =====
         side_lengths = []
         for i in range(4):
-            p1 = sorted_corners[i]
-            p2 = sorted_corners[(i + 1) % 4]
-            side_lengths.append(np.linalg.norm(p1 - p2))
+            p1 = final_corners[i]
+            p2 = final_corners[(i + 1) % 4]
+            side_lengths.append(np.linalg.norm(p2 - p1))
 
-        # 5. 计算平均边长
         avg_side = np.mean(side_lengths)
 
-        return sorted_corners, avg_side
+        return sort_corners(final_corners), avg_side
 
+    # be youhuad
     # def extract_square_features(self, contour):
     #     """提取方形特征 - 四个顶点"""
     #     if len(contour) < 4:
@@ -197,63 +326,140 @@ class GeometryFeatureProcessor:
     #     rect = cv2.minAreaRect(contour)
     #     return np.float64(cv2.boxPoints(rect))
 
+    # def extract_rectangle_features(self, contour):
+    #     """提取矩形特征 - 优化顶点提取和顺时针排序"""
+    #     # 计算轮廓的凸包
+    #     hull = cv2.convexHull(contour)
+    #
+    #     if len(hull) < 4:
+    #         return None
+    #
+    #     # 提取凸包点并转换为(n,2)格式
+    #     hull_points = hull.reshape(-1, 2)
+    #
+    #     # 若凸包点数为4，直接使用
+    #     if len(hull_points) == 4:
+    #         rect_points = hull_points
+    #     else:
+    #         # 寻找面积最大的四边形顶点组合
+    #         max_area = 0
+    #         best_points = None
+    #         n = len(hull_points)
+    #
+    #         for i in range(n):
+    #             for j in range(i + 1, n):
+    #                 for k in range(j + 1, n):
+    #                     for l in range(k + 1, n):
+    #                         pts = np.array(
+    #                             [
+    #                                 hull_points[i],
+    #                                 hull_points[j],
+    #                                 hull_points[k],
+    #                                 hull_points[l],
+    #                             ]
+    #                         )
+    #                         area = cv2.contourArea(pts)
+    #                         if area > max_area:
+    #                             max_area = area
+    #                             best_points = pts
+    #         rect_points = best_points
+    #
+    #     if rect_points is None:
+    #         return None
+    #
+    #     # 对顶点进行顺时针排序：左上→右上→右下→左下
+    #     def sort_points(points):
+    #         # 1. 按x坐标排序
+    #         x_sorted = points[np.argsort(points[:, 0])]
+    #         # 2. 分为左侧点和右侧点
+    #         left_points = x_sorted[:2]
+    #         right_points = x_sorted[2:]
+    #         # 3. 左侧点按y排序：y小→左上，y大→左下
+    #         left_points = left_points[np.argsort(left_points[:, 1])]
+    #         tl, bl = left_points  # tl=左上, bl=左下
+    #         # 4. 右侧点按y排序：y小→右上，y大→右下
+    #         right_points = right_points[np.argsort(right_points[:, 1])]
+    #         tr, br = right_points  # tr=右上, br=右下
+    #         return np.array([tl, tr, br, bl])
+    #
+    #     return sort_points(rect_points)
+
     def extract_rectangle_features(self, contour):
-        """提取矩形特征 - 优化顶点提取和顺时针排序"""
-        # 计算轮廓的凸包
-        hull = cv2.convexHull(contour)
-
-        if len(hull) < 4:
+        """
+        高精度提取矩形顶点（亚像素级优化）
+        参数:
+            contour: 输入轮廓 [N, 1, 2]
+        返回:
+            顺时针排序的四边形顶点 [左上, 右上, 右下, 左下]
+        """
+        # 1. 轮廓预处理
+        if contour is None or len(contour) < 4:
             return None
 
-        # 提取凸包点并转换为(n,2)格式
-        hull_points = hull.reshape(-1, 2)
+        # 转换为浮点格式
+        contour_f = contour.astype(np.float32).reshape(-1, 1, 2)
 
-        # 若凸包点数为4，直接使用
-        if len(hull_points) == 4:
-            rect_points = hull_points
-        else:
-            # 寻找面积最大的四边形顶点组合
-            max_area = 0
-            best_points = None
-            n = len(hull_points)
+        # 2. 多边形逼近
+        epsilon = 0.015 * cv2.arcLength(contour_f, True)
+        approx = cv2.approxPolyDP(contour_f, epsilon, True)
 
-            for i in range(n):
-                for j in range(i + 1, n):
-                    for k in range(j + 1, n):
-                        for l in range(k + 1, n):
-                            pts = np.array(
-                                [
-                                    hull_points[i],
-                                    hull_points[j],
-                                    hull_points[k],
-                                    hull_points[l],
-                                ]
-                            )
-                            area = cv2.contourArea(pts)
-                            if area > max_area:
-                                max_area = area
-                                best_points = pts
-            rect_points = best_points
+        # 3. 顶点数量处理
+        if len(approx) < 4:
+            hull = cv2.convexHull(contour_f)
+            if len(hull) < 4:
+                return None
+            approx = hull
 
-        if rect_points is None:
-            return None
+        # 4. 亚像素级优化（安全执行）
+        if hasattr(self, "gray_image") and self.gray_image is not None:
+            win_size = 5  # 减小窗口尺寸[1](@ref)
+            criteria = (cv2.TERM_CRITERIA_EPS +
+                        cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
-        # 对顶点进行顺时针排序：左上→右上→右下→左下
-        def sort_points(points):
-            # 1. 按x坐标排序
-            x_sorted = points[np.argsort(points[:, 0])]
-            # 2. 分为左侧点和右侧点
-            left_points = x_sorted[:2]
-            right_points = x_sorted[2:]
-            # 3. 左侧点按y排序：y小→左上，y大→左下
-            left_points = left_points[np.argsort(left_points[:, 1])]
-            tl, bl = left_points  # tl=左上, bl=左下
-            # 4. 右侧点按y排序：y小→右上，y大→右下
-            right_points = right_points[np.argsort(right_points[:, 1])]
-            tr, br = right_points  # tr=右上, br=右下
-            return np.array([tl, tr, br, bl])
+            try:
+                # 检查所有点是否在安全边界内
+                margin = win_size * 2 + 5
+                valid_points = []
+                for pt in approx:
+                    x, y = pt[0]
+                    if (
+                        margin < x < self.gray_image.shape[1] - margin
+                        and margin < y < self.gray_image.shape[0] - margin
+                    ):
+                        valid_points.append(True)
+                    else:
+                        valid_points.append(False)
 
-        return sort_points(rect_points)
+                # 只优化安全点
+                if all(valid_points):
+                    cv2.cornerSubPix(
+                        self.gray_image,
+                        approx,
+                        (win_size, win_size),
+                        (-1, -1),
+                        criteria,
+                    )
+            except cv2.error:
+                # 安全处理OpenCV错误
+                pass
+
+        # 5. 最小外接矩形精确拟合
+        rect = cv2.minAreaRect(approx)
+        rect_points = cv2.boxPoints(rect).astype(np.float32)
+
+        # 6. 顶点排序优化
+        # 计算质心
+        centroid = np.mean(rect_points, axis=0)
+
+        # 计算相对向量的极角
+        vectors = rect_points - centroid
+        angles = np.arctan2(vectors[:, 1], vectors[:, 0])
+
+        # 按角度排序
+        sorted_idx = np.argsort(angles)
+
+        # 顺时针排序 [左上, 右上, 右下, 左下]
+        return rect_points[sorted_idx]
 
     # def extract_rectangle_features(self, contour):
     #     """提取征 - 使用面积最大法优化顶点提取"""
@@ -308,6 +514,8 @@ class GeometryFeatureProcessor:
     # else:
     #     rect = cv2.minAreaRect(hull)
     #     return np.float64(cv2.boxPoints(rect))
+
+    # be youhuad
     def extract_triangle_features(self, contour):
         """提取三角形特征 - 返回三个有序角点和平均边长"""
         # 1. 轮廓有效性验证
@@ -382,6 +590,210 @@ class GeometryFeatureProcessor:
         return sorted_points, avg_side
 
     # def extract_triangle_features(self, contour):
+    #     """高精度提取三角形特征 - 亚像素级优化+几何拟合
+    #     Args:
+    #         contour: 输入轮廓 (N,1,2)
+    #     Returns:
+    #         sorted_points: 优化后的三个角点 [左上, 右上, 右下]
+    #         avg_side: 亚像素级平均边长
+    #     """
+    #     # ===== 1. 轮廓预处理 =====
+    #     if contour is None or len(contour) < 3:
+    #         return None, None
+    #
+    #     # 转换为浮点型并移除重复点
+    #     contour = contour.astype(np.float32).reshape(-1, 2)
+    #     contour = np.unique(contour, axis=0)  # 移除重复点
+    #
+    #     # 计算凸包保证凸性
+    #     try:
+    #         hull = cv2.convexHull(contour.reshape(-1, 1, 2)).reshape(-1, 2)
+    #         if len(hull) < 3:
+    #             return None, None
+    #     except Exception as e:
+    #         print(f"凸包计算异常: {str(e)}")
+    #         return None, None
+    #
+    #     # ===== 2. 顶点优化 =====
+    #     # 方法1：多边形逼近优先
+    #     epsilon = 0.015 * cv2.arcLength(contour, True)  # 更严格的逼近系数
+    #     approx = cv2.approxPolyDP(contour.reshape(-1, 1, 2), epsilon, True).reshape(
+    #         -1, 2
+    #     )
+    #
+    #     if len(approx) == 3:
+    #         points = approx
+    #     else:
+    #         # 方法2：最小外接三角形
+    #         try:
+    #             _, triangle_pts = cv2.minEnclosingTriangle(contour)
+    #             points = triangle_pts.reshape(3, 2)
+    #         except:
+    #             # 回退到凸包顶点
+    #             if len(hull) == 3:
+    #                 points = hull
+    #             else:
+    #                 # 选择凸包上面积最大的三点[7](@ref)
+    #                 max_area = 0
+    #                 best_points = None
+    #                 for i in range(len(hull)):
+    #                     for j in range(i + 1, len(hull)):
+    #                         for k in range(j + 1, len(hull)):
+    #                             pts = np.array([hull[i], hull[j], hull[k]])
+    #                             area = cv2.contourArea(pts.reshape(-1, 1, 2))
+    #                             if area > max_area:
+    #                                 max_area = area
+    #                                 best_points = pts
+    #                 points = best_points if best_points is not None else hull[:3]
+    #
+    #     # ===== 3. 亚像素级顶点优化 =====
+    #     def optimize_vertex(pts, window_size=5):  # 减小窗口尺寸[1](@ref)
+    #         """亚像素级角点优化"""
+    #         optimized = []
+    #         margin = window_size * 2 + 5  # 动态安全边界
+    #
+    #         for pt in pts:
+    #             x, y = pt[0], pt[1]  # 保持浮点精度
+    #
+    #             # 检查是否在安全边界内
+    #             if (
+    #                 hasattr(self, "gray_image")
+    #                 and self.gray_image is not None
+    #                 and margin < x < self.gray_image.shape[1] - margin
+    #                 and margin < y < self.gray_image.shape[0] - margin
+    #             ):
+    #
+    #                 # 创建搜索窗口
+    #                 x1 = max(0, int(x) - window_size)
+    #                 y1 = max(0, int(y) - window_size)
+    #                 x2 = min(self.gray_image.shape[1], int(
+    #                     x) + window_size + 1)
+    #                 y2 = min(self.gray_image.shape[0], int(
+    #                     y) + window_size + 1)
+    #
+    #                 # 提取窗口内轮廓点
+    #                 window_contour = []
+    #                 for p in contour:
+    #                     if x1 <= p[0] <= x2 and y1 <= p[1] <= y2:
+    #                         window_contour.append(p)
+    #
+    #                 if len(window_contour) > 5:
+    #                     # 最小二乘拟合直线
+    #                     X = np.array(window_contour)
+    #                     centroid = np.mean(X, axis=0)
+    #                     cov = (X - centroid).T @ (X - centroid)
+    #                     _, _, Vt = np.linalg.svd(cov)
+    #                     normal = Vt[0]  # 主成分方向
+    #
+    #                     # 求直线参数 (ax+by+c=0)
+    #                     a, b = normal
+    #                     c = -np.dot(normal, centroid)
+    #                     optimized.append((a, b, c))
+    #                 else:
+    #                     optimized.append(None)
+    #             else:
+    #                 optimized.append(None)  # 边界点不优化
+    #
+    #         # 解直线交点
+    #         if all(o is not None for o in optimized):
+    #             final_points = []
+    #             for i in range(3):
+    #                 a1, b1, c1 = optimized[i]
+    #                 a2, b2, c2 = optimized[(i + 1) % 3]
+    #                 A = np.array([[a1, b1], [a2, b2]])
+    #                 b = np.array([-c1, -c2])
+    #                 try:
+    #                     pt = np.linalg.solve(A, b)
+    #                     final_points.append(pt)
+    #                 except:
+    #                     final_points.append(points[i])
+    #             return np.array(final_points)
+    #         return points
+    #
+    #     # 仅在类中存储灰度图时启用
+    #     if hasattr(self, "gray_image") and self.gray_image is not None:
+    #         points = optimize_vertex(points)
+    #
+    #     # ===== 4. 顶点排序 =====
+    #     def sort_triangle_vertices(pts):
+    #         """几何稳定的顶点排序"""
+    #         # 计算质心
+    #         centroid = np.mean(pts, axis=0)
+    #
+    #         # 计算相对向量的极角
+    #         vectors = pts - centroid
+    #         angles = np.arctan2(vectors[:, 1], vectors[:, 0])  # 注意图像坐标系Y轴向下
+    #
+    #         # 按顺时针排序 (左上→右上→右下)
+    #         sorted_idx = np.argsort(angles)[::-1]  # 从大到小排序实现顺时针
+    #
+    #         # 调整顺序确保第一个点是y最小的
+    #         y_sorted_idx = np.argsort(pts[sorted_idx][:, 1])
+    #         return pts[sorted_idx][y_sorted_idx]
+    #
+    #     sorted_points = sort_triangle_vertices(points)
+    #
+    #     # ===== 5. 高精度边长计算 =====
+    #     def precise_distance(p1, p2):
+    #         """双精度距离计算"""
+    #         dx = p2[0] - p1[0]
+    #         dy = p2[1] - p1[1]
+    #         return np.sqrt(dx * dx + dy * dy)  # 避免np.linalg.norm的精度损失
+    #
+    #     side_lengths = [
+    #         precise_distance(sorted_points[0], sorted_points[1]),
+    #         precise_distance(sorted_points[1], sorted_points[2]),
+    #         precise_distance(sorted_points[2], sorted_points[0]),
+    #     ]
+    #
+    #     # 加权平均（考虑角度权重）
+    #     angles = [
+    #         np.arccos(
+    #             np.clip(
+    #                 np.dot(
+    #                     (sorted_points[1] - sorted_points[0]) /
+    #                     side_lengths[0],
+    #                     (sorted_points[2] - sorted_points[0]) /
+    #                     side_lengths[2],
+    #                 ),
+    #                 -1,
+    #                 1,
+    #             )
+    #         ),
+    #         np.arccos(
+    #             np.clip(
+    #                 np.dot(
+    #                     (sorted_points[0] - sorted_points[1]) /
+    #                     side_lengths[0],
+    #                     (sorted_points[2] - sorted_points[1]) /
+    #                     side_lengths[1],
+    #                 ),
+    #                 -1,
+    #                 1,
+    #             )
+    #         ),
+    #         np.arccos(
+    #             np.clip(
+    #                 np.dot(
+    #                     (sorted_points[0] - sorted_points[2]) /
+    #                     side_lengths[2],
+    #                     (sorted_points[1] - sorted_points[2]) /
+    #                     side_lengths[1],
+    #                 ),
+    #                 -1,
+    #                 1,
+    #             )
+    #         ),
+    #     ]
+    #
+    #     # 角度加权平均
+    #     total_angle = sum(angles)
+    #     weights = [angle / total_angle for angle in angles]
+    #     avg_side = sum(w * l for w, l in zip(weights, side_lengths))
+    #
+    #     return sorted_points, avg_side
+
+    # def extract_triangle_features(self, contour):
     #     """提取三角形特征 - 使用面积最大法优化顶点提取"""
     #     # 计算轮廓的凸包
     #     hull = cv2.convexHull(contour)
@@ -415,31 +827,146 @@ class GeometryFeatureProcessor:
     #
     #     return best_points
 
+    # be youhuad
+    # def extract_circle_features(self, contour):
+    #     """提取圆形特征 - 返回圆心坐标和直径"""
+    #     # 1. 验证轮廓有效性
+    #     if contour is None or len(contour) < 3:
+    #         print("轮廓无效：空或点数不足")
+    #         return None, None
+    #
+    #     # 2. 强制转换数据类型
+    #     try:
+    #         if contour.dtype not in (np.float32, np.int32):
+    #             contour = contour.astype(np.float32)  # 转为OpenCV要求的32位浮点
+    #     except Exception as e:
+    #         print(f"数据类型转换失败：{str(e)}")
+    #         return None, None
+    #
+    #     # 3. 执行计算（含异常捕获）
+    #     try:
+    #         (x, y), radius = cv2.minEnclosingCircle(contour)
+    #         return np.array([x, y], dtype=np.float32), float(radius * 2)
+    #     except cv2.error as e:
+    #         print(f"OpenCV错误：{str(e)}")
+    #         return None, None
+    #     except Exception as e:
+    #         print(f"未知错误：{str(e)}")
+    #         return None, None
     def extract_circle_features(self, contour):
-        """提取圆形特征 - 返回圆心坐标和直径"""
-        # 1. 验证轮廓有效性
-        if contour is None or len(contour) < 3:
-            print("轮廓无效：空或点数不足")
+        """高精度提取圆形特征 - 亚像素级优化+椭圆拟合
+        Args:
+            contour: 输入轮廓 (N,1,2)
+        Returns:
+            center: 优化后的圆心坐标 [x, y]
+            diameter: 亚像素级直径
+        """
+        # ===== 1. 轮廓预处理 =====
+        if contour is None or len(contour) < 15:  # 至少需要15个点保证拟合精度
             return None, None
 
-        # 2. 强制转换数据类型
+        # 转换为浮点型并移除重复点
+        contour = contour.astype(np.float32).reshape(-1, 2)
+        contour = np.unique(contour, axis=0)
+
+        # ===== 2. 亚像素级轮廓优化 =====
+        if hasattr(self, "gray_image") and self.gray_image is not None:
+            # 在类中存储灰度图时可启用亚像素优化
+            refined_contour = []
+            win_size = 5  # 减小窗口尺寸避免边界问题[1](@ref)
+            margin = win_size * 2 + 5  # 动态计算安全边界
+
+            for pt in contour:
+                x, y = pt[0], pt[1]  # 保持浮点精度[1](@ref)
+
+                # 动态边界检查[1](@ref)
+                if (
+                    margin < x < self.gray_image.shape[1] - margin
+                    and margin < y < self.gray_image.shape[0] - margin
+                ):
+
+                    # 5x5窗口亚像素优化[3](@ref)
+                    win = (win_size, win_size)
+                    zero_zone = (-1, -1)
+                    criteria = (
+                        cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
+                        30,
+                        0.001,
+                    )
+                    pt_refined = np.array([[x, y]], dtype=np.float32)
+
+                    try:
+                        cv2.cornerSubPix(
+                            self.gray_image, pt_refined, win, zero_zone, criteria
+                        )
+                        refined_contour.append(pt_refined[0])
+                    except cv2.error as e:
+                        # 安全捕获OpenCV错误
+                        refined_contour.append(pt)
+                else:
+                    refined_contour.append(pt)  # 边界点使用原始坐标
+            contour = np.array(refined_contour)
+
+        # ===== 3. 椭圆拟合替代最小外接圆 =====
         try:
-            if contour.dtype not in (np.float32, np.int32):
-                contour = contour.astype(np.float32)  # 转为OpenCV要求的32位浮点
-        except Exception as e:
-            print(f"数据类型转换失败：{str(e)}")
+            # 椭圆拟合（需至少5个点）
+            if len(contour) >= 5:
+                ellipse = cv2.fitEllipse(contour)
+                (center, axes, _) = ellipse
+
+                # 椭圆→正圆转换（取长短轴平均值）
+                diameter = (axes[0] + axes[1]) / 2
+            else:
+                # 点不足时回退到最小外接圆
+                (x, y), radius = cv2.minEnclosingCircle(contour)
+                center, diameter = (x, y), radius * 2
+        except cv2.error:
             return None, None
 
-        # 3. 执行计算（含异常捕获）
-        try:
-            (x, y), radius = cv2.minEnclosingCircle(contour)
-            return np.array([x, y], dtype=np.float32), float(radius * 2)
-        except cv2.error as e:
-            print(f"OpenCV错误：{str(e)}")
-            return None, None
-        except Exception as e:
-            print(f"未知错误：{str(e)}")
-            return None, None
+        # ===== 4. 几何约束验证 =====
+        # 计算轮廓面积与拟合圆面积比值
+        contour_area = cv2.contourArea(contour)
+        circle_area = np.pi * (diameter / 2) ** 2
+
+        # 圆形度验证（0.85-1.15为合理范围）
+        if not 0.85 <= contour_area / circle_area <= 1.15:
+            return None, None  # 非圆形轮廓
+
+        # ===== 5. 高精度直径计算 =====
+        # 基于轮廓点到圆心距离加权平均
+        distances = []
+        weights = []
+
+        for pt in contour:
+            dx = pt[0] - center[0]
+            dy = pt[1] - center[1]
+            dist = np.sqrt(dx * dx + dy * dy)
+
+            # 梯度权重：边缘梯度越大权重越高
+            if hasattr(self, "gray_image") and self.gray_image is not None:
+                try:
+                    # 安全获取梯度信息
+                    gx = cv2.Scharr(self.gray_image,
+                                    cv2.CV_32F, 1, 0, scale=0.5)
+                    gy = cv2.Scharr(self.gray_image,
+                                    cv2.CV_32F, 0, 1, scale=0.5)
+                    grad_mag = np.sqrt(
+                        gx[int(pt[1]), int(pt[0])] ** 2
+                        + gy[int(pt[1]), int(pt[0])] ** 2
+                    )
+                    weights.append(grad_mag)
+                except:
+                    weights.append(1.0)
+            else:
+                weights.append(1.0)
+
+            distances.append(dist)
+
+        # 加权平均直径
+        avg_radius = np.average(distances, weights=weights)
+        final_diameter = 2 * avg_radius
+
+        return np.array(center, dtype=np.float32), final_diameter
 
     def extract_ellipse_features(self, contour):
         """提取椭圆特征 - 长轴和短轴的四个端点"""

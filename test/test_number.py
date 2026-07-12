@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import sys
 from ultralytics import YOLO
 import torch
 
@@ -9,9 +10,19 @@ class NumberClassifier:
         数字分类器初始化
         :param model_path: 预训练模型路径（支持.pt或.onnx格式）
         :param conf_threshold: 置信度阈值（低于此值视为无效预测）
-        :param device: 推理设备（'cpu', 'cuda' 或 'auto'自动选择）
+        :param device: 推理设备（'cpu', 'cuda:0' 或 'auto'自动选择）
         """
-        # 加载模型并强制转换为float32精度[6](@ref)
+        # 解析 device 参数
+        if device == "auto":
+            try:
+                import torch
+                if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+                    device = "cuda:0"
+                else:
+                    device = "cpu"
+            except Exception:
+                device = "cpu"
+
         self.model = YOLO(model_path).float() if device == "cpu" else YOLO(model_path)
         self.conf_threshold = conf_threshold
         self.device = device
@@ -74,10 +85,36 @@ class NumberClassifier:
 
 # 使用示例
 if __name__ == "__main__":
+    import os
+
     print("torch cuda: ", torch.cuda.is_available())
+
+    # 路径
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+    model_path = os.path.join(project_root, "workdir/ros2_ws/model/number.pt")
+    test_image_path = os.path.join(project_root, "assets/test_number.jpg")
+    output_image_path = os.path.join(project_root, "test_number_result.jpg")
+
     # 初始化分类器
-    number_classifier = NumberClassifier(model_path="workdir/ros2_ws/model/number.pt")
-    
-    # 示例1：处理图像文件
-    result = number_classifier.detect("assets/test_number.jpg")
+    number_classifier = NumberClassifier(model_path=model_path)
+
+    # 读取原始图像
+    original_image = cv2.imread(test_image_path)
+    if original_image is None:
+        print(f"[ERROR] 无法读取图像: {test_image_path}")
+        sys.exit(1)
+    print(f"[OK]   加载图像: {test_image_path} ({original_image.shape[1]}x{original_image.shape[0]})")
+
+    # 执行数字识别
+    result = number_classifier.detect(test_image_path)
     print(f"识别结果: {result}")
+
+    # 可视化并保存
+    if result is not None:
+        digit, conf = result
+        result_image = number_classifier.visualize(original_image, result)
+        cv2.imwrite(output_image_path, result_image)
+        print(f"[OK]   结果图片已保存: {output_image_path}")
+    else:
+        print("[WARN] 未检测到有效数字（置信度低于阈值）")

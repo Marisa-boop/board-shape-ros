@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Marisa-boop
+# SPDX-License-Identifier: MIT
+
 import cv2
 import numpy as np
 from typing import Tuple, Optional, List

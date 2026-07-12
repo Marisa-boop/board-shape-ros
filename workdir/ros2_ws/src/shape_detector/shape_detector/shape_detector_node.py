@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Marisa-boop
+# SPDX-License-Identifier: MIT
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image

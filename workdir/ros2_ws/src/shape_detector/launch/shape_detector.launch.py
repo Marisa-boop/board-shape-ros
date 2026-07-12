@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Marisa-boop
+# SPDX-License-Identifier: MIT
+
 # from launch import LaunchDescription
 # from launch_ros.actions import Node
 #

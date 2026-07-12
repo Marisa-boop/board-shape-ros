@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Marisa-boop
+# SPDX-License-Identifier: MIT
+
 import yaml
 import numpy as np
 from typing import List, Tuple

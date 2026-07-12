@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Marisa-boop
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 Standalone test script for the shape detection pipeline.
